@@ -46,19 +46,19 @@ class BerkeleyClient:
                 try:
                     data = self.socket.recv(1024)
                     if not data:
-                        print("Conexão com o coordenador perdida")
+                        print(f"[{self.client_id}] Conexão com o coordenador perdida")
                         break
                     
                     self.handle_message(data)
                 except socket.timeout:
                     continue
                 except Exception as e:
-                    print(f"Erro ao receber mensagem: {e}")
+                    print(f"[{self.client_id}] Erro ao receber mensagem: {e}")
                     break
         finally:
             if self.socket:
                 self.socket.close()
-            print(f"{self.client_id} desconectado")
+            print(f"[{self.client_id}] Desconectado")
     
     def handle_message(self, data):
         message = json.loads(data.decode('utf-8'))

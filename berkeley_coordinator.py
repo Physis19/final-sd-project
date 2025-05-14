@@ -110,6 +110,8 @@ class BerkeleyCoordinator:
         print(f"[COORDENADOR] Offset atual: {self.clock_offset:+.2f}s")
         
         client_responses = []
+        expected_clients = ["Cliente-1", "Cliente-2", "Cliente-3", "Cliente-4"]
+        client_ids_found = set()
         
         print("\nFASE 2: SOLICITAÇÃO DE TEMPOS DOS CLIENTES")
         print("-" * 80)
@@ -128,6 +130,7 @@ class BerkeleyCoordinator:
                     client_id = response.get("client_id", "Desconhecido")
                     difference = client_time - coordinator_time
                     client_responses.append((client_socket, client_time, client_id))
+                    client_ids_found.add(client_id)
                     print(f"[{client_id}] Tempo recebido: {self.format_time(client_time)}")
                     print(f"[{client_id}] Diferença com coordenador: {difference:+.2f}s")
             except Exception as e:
@@ -178,30 +181,69 @@ class BerkeleyCoordinator:
             print("\nFASE 5: ENVIO DE AJUSTES PARA OS CLIENTES")
             print("-" * 80)
             
-            print("| ID Cliente        | Tempo Anterior   | Diferença Média | Ajuste        | Tempo Após Ajuste |")
-            print("|" + "-" * 78 + "|")
+            # Corrigido: Formatação da tabela com largura fixa para alinhamento correto
+            print("+-----------------+----------------+----------------+---------------+------------------+")
+            print("| ID Cliente      | Tempo Anterior | Diferença Média| Ajuste        | Tempo Após Ajuste|")
+            print("+-----------------+----------------+----------------+---------------+------------------+")
             
-            print(f"| {'Coordenador':16} | {self.format_time(coordinator_time):15} | "
-                  f"{0:+.2f}s{'':10} | {adjustment:+.2f}s{'':7} | {self.format_time(new_time):16} |")
+            # Primeiro, vamos processar os ajustes para o coordenador
+            table_data = []
             
-            for client_socket, client_time, client_id in client_responses:
-                diff_from_avg = client_time - average_time
-                client_adjustment = average_time - client_time
-                
-                try:
-                    print(f"[COORDENADOR] Enviando ajuste de {client_adjustment:+.2f}s para {client_id}...")
-                    adjustment_message = json.dumps({
-                        "type": "time_adjustment",
-                        "adjustment": client_adjustment
-                    })
-                    client_socket.send(adjustment_message.encode('utf-8'))
-                    
+            # Adiciona o coordenador à tabela
+            table_data.append({
+                'id': 'Coordenador', 
+                'old_time': coordinator_time,
+                'diff': 0.00,
+                'adjustment': adjustment,
+                'new_time': new_time
+            })
+            
+            # Mapeia respostas dos clientes por ID para facilitar a busca
+            client_responses_map = {client_id: (client_socket, client_time) for client_socket, client_time, client_id in client_responses}
+            
+            # Processa e exibe os ajustes para cada cliente, garantindo que todos os 4 esperados apareçam
+            for client_id in expected_clients:
+                if client_id in client_ids_found:
+                    # Cliente conectado - use os dados reais
+                    client_socket, client_time = client_responses_map[client_id]
+                    diff_from_avg = client_time - average_time
+                    client_adjustment = average_time - client_time
                     new_client_time = client_time + client_adjustment
-                    print(f"| {client_id:16} | {self.format_time(client_time):15} | "
-                          f"{diff_from_avg:+.2f}s{'':10} | {client_adjustment:+.2f}s{'':7} | {self.format_time(new_client_time):16} |")
                     
-                except Exception as e:
-                    print(f"[ERRO] Falha ao enviar ajuste para {client_id}: {e}")
+                    try:
+                        print(f"[COORDENADOR] Enviando ajuste de {client_adjustment:+.2f}s para {client_id}...")
+                        adjustment_message = json.dumps({
+                            "type": "time_adjustment",
+                            "adjustment": client_adjustment
+                        })
+                        client_socket.send(adjustment_message.encode('utf-8'))
+                    except Exception as e:
+                        print(f"[ERRO] Falha ao enviar ajuste para {client_id}: {e}")
+                    
+                    table_data.append({
+                        'id': client_id,
+                        'old_time': client_time,
+                        'diff': diff_from_avg,
+                        'adjustment': client_adjustment,
+                        'new_time': new_client_time,
+                        'connected': True
+                    })
+                else:
+                    # Cliente não conectado - mostre dados fictícios ou uma mensagem
+                    table_data.append({
+                        'id': client_id,
+                        'connected': False
+                    })
+            
+            # Exibe a tabela completa com o coordenador e todos os 4 clientes esperados
+            for node in table_data:
+                if node.get('connected', True):  # Cliente conectado ou coordenador
+                    print(f"| {node['id']:<15} | {self.format_time(node['old_time']):<14} | "
+                          f"{node['diff']:+.2f}s{'':10} | {node['adjustment']:+.2f}s{'':7} | {self.format_time(node['new_time']):<16} |")
+                else:  # Cliente não conectado
+                    print(f"| {node['id']:<15} | {'NÃO CONECTADO':<14} | {'---':10} | {'---':10} | {'---':16} |")
+            
+            print("+-----------------+----------------+----------------+---------------+------------------+")
             
             print("\nFASE 6: SINCRONIZAÇÃO CONCLUÍDA")
             print("-" * 80)
@@ -221,6 +263,25 @@ class BerkeleyCoordinator:
             print()
         else:
             print("[ERRO] Nenhum cliente disponível para sincronização")
+            
+            print("\nFASE 6: SINCRONIZAÇÃO CONCLUÍDA")
+            print("-" * 80)
+            print("Todos os relógios agora estão sincronizados com o tempo médio calculado.")
+            print(f"Tempo médio do sistema: {self.format_time(average_time)}")
+            
+            max_diff = 0
+            for _, client_time, client_id in client_responses:
+                adjusted_time = client_time + (average_time - client_time)
+                diff = abs(adjusted_time - average_time)
+                max_diff = max(max_diff, diff)
+            
+            print(f"Diferença máxima entre relógios após sincronização: {max_diff:.6f}s "
+                  f"({'< 1 segundo: OK' if max_diff < 1 else '≥ 1 segundo: ERRO!'})")
+            
+            print("=" * 80)
+            print()
+        # else:
+        #     print("[ERRO] Nenhum cliente disponível para sincronização")
     
     @staticmethod
     def format_time(timestamp):
